@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		
+		<Version>1.0.0</Version>
+		<Authors>aianlinb</Authors>
+		<Copyright>Copyright © 2024 aianlinb</Copyright>
+		<PackageId>LastEpoch.Font</PackageId>
+		<RepositoryUrl>https://github.com/aianlinb/LEFontPatch</RepositoryUrl>
+		<PackageProjectUrl>$(RepositoryUrl)</PackageProjectUrl>
+
+		<RollForward>LatestMajor</RollForward>
+		<PublishAot>true</PublishAot>
+		<IlcTrimMetadata>true</IlcTrimMetadata>
+		<DebuggerSupport>false</DebuggerSupport>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AssetsTools.NET.Cpp2IL" Version="*" />
+		<EmbeddedResource Include="classdata.tpk" />
+	</ItemGroup>
+
+</Project>
