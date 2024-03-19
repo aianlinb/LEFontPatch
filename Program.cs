@@ -31,6 +31,7 @@ namespace LEFontPatch {
 		}
 
 		public static void Run(string gameDataPath, string zipOrFolderPath) {
+
 			using var zip = Directory.Exists(zipOrFolderPath) ? null : ZipFile.OpenRead(zipOrFolderPath);
 			var zipEntries = zip?.Entries.ToDictionary(e => e.FullName.ToLowerInvariant(), e => e);
 
@@ -38,7 +39,7 @@ namespace LEFontPatch {
 			try {
 				byte[] GetFile(string fileName) {
 					if (zip is null)
-						return File.ReadAllBytes(fileName);
+						return File.ReadAllBytes(Path.Combine(zipOrFolderPath, fileName));
 					if (!zipEntries!.TryGetValue(fileName.ToLowerInvariant(), out var e))
 						throw new FileNotFoundException(fileName + " not found in the zip file");
 					Console.WriteLine("Getting " + fileName);
