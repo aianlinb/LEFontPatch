@@ -9,29 +9,32 @@ using System.Text.Json.Nodes;
 namespace LEFontPatch {
 	public static class Program {
 		public static void Main(string[] args) {
-			if (args.Length != 2)
-				Console.WriteLine("Usage: LEFontPatch <gamePath> <zipPath>");
-			else
-				try {
-					Run(args[0] + "/Last Epoch_Data", args[1]);
-					return; // Do not pause if success
-				} catch (Exception ex) {
-					var tmp = Console.ForegroundColor;
-					Console.ForegroundColor = ConsoleColor.Red;
-					Console.WriteLine("Error");
-					Console.Error.WriteLine(ex);
-					Console.ForegroundColor = tmp;
+			if (args.Length != 2) {
+				Console.WriteLine("Usage: LEFontPatch <gamePath> <zipPath|folderPath>");
+				if (args.Length == 0)
+					goto pause;
+				return;
+			}
+			try {
+				Run(args[0] + "/Last Epoch_Data", args[1]);
+				return; // Do not pause if success
+			} catch (Exception ex) {
+				var tmp = Console.ForegroundColor;
+				Console.ForegroundColor = ConsoleColor.Red;
+				Console.WriteLine("Error");
+				Console.Error.WriteLine(ex);
+				Console.ForegroundColor = tmp;
 #if DEBUG
-					ExceptionDispatchInfo.Capture(ex).Throw(); // Throw to the debugger
+				ExceptionDispatchInfo.Capture(ex).Throw(); // Throw to the debugger
 #endif
-				}
+			}
+		pause:
 			Console.WriteLine();
 			Console.Write("Enter to exit . . .");
 			Console.ReadLine();
 		}
 
 		public static void Run(string gameDataPath, string zipOrFolderPath) {
-
 			using var zip = Directory.Exists(zipOrFolderPath) ? null : ZipFile.OpenRead(zipOrFolderPath);
 			var zipEntries = zip?.Entries.ToDictionary(e => e.FullName.ToLowerInvariant(), e => e);
 
@@ -42,7 +45,7 @@ namespace LEFontPatch {
 						return File.ReadAllBytes(Path.Combine(zipOrFolderPath, fileName));
 					if (!zipEntries!.TryGetValue(fileName.ToLowerInvariant(), out var e))
 						throw new FileNotFoundException(fileName + " not found in the zip file");
-					Console.WriteLine("Getting " + fileName);
+					Console.WriteLine("Zip: Getting " + fileName);
 					var len = (int)e.Length;
 					if (buffer is not null && buffer.Length < len) {
 						ArrayPool<byte>.Shared.Return(buffer);
@@ -60,7 +63,7 @@ namespace LEFontPatch {
 				}).AsObject();
 
 				Console.WriteLine("Reading TMP_FontAssets");
-				using var manager = new LEFontManager(Path.GetFullPath(gameDataPath));
+				using var manager = new LEFontManager(gameDataPath);
 				Console.WriteLine();
 
 				var sourceFonts = json["sourceFontFiles"]?.AsArray().Select(

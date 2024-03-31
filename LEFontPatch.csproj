@@ -5,6 +5,13 @@
 		<TargetFramework>net8.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
+		<PublishAot>true</PublishAot>
+		<InvariantGlobalization>true</InvariantGlobalization>
+		
+		<IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
+		<DebuggerSupport>false</DebuggerSupport>
+		<EventSourceSupport>false</EventSourceSupport>
+		<RollForward>LatestMajor</RollForward>
 		
 		<Version>1.0.0</Version>
 		<Authors>aianlinb</Authors>
@@ -12,14 +19,6 @@
 		<PackageId>LastEpoch.Font</PackageId>
 		<RepositoryUrl>https://github.com/aianlinb/LEFontPatch</RepositoryUrl>
 		<PackageProjectUrl>$(RepositoryUrl)</PackageProjectUrl>
-
-		<RollForward>LatestMajor</RollForward>
-		<InvariantGlobalization>true</InvariantGlobalization>
-		
-		<PublishAot>true</PublishAot>
-		<IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
-		<DebuggerSupport>false</DebuggerSupport>
-		<EventSourceSupport>false</EventSourceSupport>
 	</PropertyGroup>
 
 	<ItemGroup>

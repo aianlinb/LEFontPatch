@@ -24,7 +24,7 @@ namespace LEFontPatch {
 		public readonly Dictionary<int, AssetTypeValueField> TMPFonts = [];
 
 		public LEFontManager(string gameDataPath) {
-			this.gameDataPath = gameDataPath;
+			this.gameDataPath = Path.GetFullPath(gameDataPath);
 			var result = FindCpp2IlFiles.Find(gameDataPath);
 			if (!result.success)
 				throw new FileNotFoundException("Unable to find the metadata or assembly in the game data folder: " + gameDataPath);
@@ -37,10 +37,10 @@ namespace LEFontPatch {
 			};
 			try {
 				using (var tpk = Assembly.GetExecutingAssembly().GetManifestResourceStream(nameof(LEFontPatch) + ".classdata.tpk"))
-					manager.LoadClassPackage(tpk); // https://github.com/AssetRipper/Tpk  (Don't use the brotli one)
+					manager.LoadClassPackage(tpk); // Type Tree Tpk from: https://github.com/AssetRipper/Tpk (Don't use the brotli one)
 
-				sharedassets1 = manager.LoadAssetsFile(Path.Combine(gameDataPath, "sharedassets1.assets"));
-				resources = manager.LoadAssetsFile(Path.Combine(gameDataPath, "resources.assets"));
+				sharedassets1 = manager.LoadAssetsFile(gameDataPath + "/sharedassets1.assets");
+				resources = manager.LoadAssetsFile(gameDataPath + "/resources.assets");
 
 				for (var i = 0; i < sharedassets1.file.Metadata.Externals.Count; ++i)
 					if (sharedassets1.file.Metadata.Externals[i].PathName == "resources.assets") {
@@ -104,14 +104,9 @@ namespace LEFontPatch {
 		public AssetFileInfo GetAsset(int index) => index < 0 ? resources.file.Metadata.AssetInfos[~index]
 														: sharedassets1.file.Metadata.AssetInfos[index];
 		public AssetFileInfo GetAsset(int index, out AssetTypeValueField field) {
-			AssetFileInfo info;
-			if (index < 0) {
-				info = resources.file.Metadata.AssetInfos[~index];
-				field = manager.GetBaseField(resources, info);
-			} else {
-				info = sharedassets1.file.Metadata.AssetInfos[index];
-				field = manager.GetBaseField(sharedassets1, info);
-			}
+			var info = GetAsset(index);
+			if (!TMPFonts.TryGetValue(index, out field!))
+				field = manager.GetBaseField(index < 0 ? resources : sharedassets1, info);
 			return info;
 		}
 
@@ -121,37 +116,40 @@ namespace LEFontPatch {
 			var mod = offset % 4;
 			if (mod != 0)
 				offset += 4 - mod;
-			data.AsSpan(offset, 12).Clear(); // m_DefaultMaterial
-			offset += 12 + sizeof(float); // m_FontSize
-			data.AsSpan(offset, 12).Clear(); // m_Texture
+			const int AssetRefSize = sizeof(int) + sizeof(long); // m_FileID, m_PathID
+			data.AsSpan(offset, AssetRefSize).Clear(); // m_DefaultMaterial
+			offset += AssetRefSize + sizeof(float); // m_FontSize
+			data.AsSpan(offset, AssetRefSize).Clear(); // m_Texture
 			return AddAsset(data, AssetClassID.Font);
 		}
 
 		public int AddAtlas(byte[] data) {
+			[DoesNotReturn, DebuggerNonUserCode]
+			static void Throw() => throw new ArgumentException("Stream data isn't supported, please move the pixel datas into the Texture2D asset first.", nameof(data));
+
 			if (!new ReadOnlySpan<byte>(data).EndsWith((ReadOnlySpan<byte>)[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
 				Throw();
 			return AddAsset(data, AssetClassID.Texture2D);
-
-			[DoesNotReturn, DebuggerNonUserCode]
-			static void Throw() => throw new ArgumentException("Stream data isn't supported, please move the pixel datas into the Texture2D asset first.", nameof(data));
 		}
 
 		public int AddMaterial(byte[] data, int atlas) {
+			[DoesNotReturn, DebuggerNonUserCode]
+			static void Throw() => throw new ArgumentException("Cannot reference assets outside resource.assets", nameof(atlas));
 			if (atlas >= 0)
-				throw new ArgumentException("Cannot reference assets outside resource.assets", nameof(atlas));
+				Throw();
 
 			var result = AddAsset(data, AssetClassID.Material);
 			var info = GetAsset(result, out var field);
 
-			var shader = field[1].Children; // m_Shader
+			var shader = field["m_Shader"].Children;
+			var otherMaterial = resources.file.GetAssetInfo(TMPFonts.First(kvp => kvp.Key < 0).Value["material"]["m_PathID"].AsLong);
 			shader.Clear();
-			var otherMaterial = resources.file.GetAssetInfo(TMPFonts.First(k => k.Key < 0).Value["material"]["m_PathID"].AsLong);
-			shader.AddRange(manager.GetBaseField(resources, otherMaterial)[1].Children); // TextMeshPro/DistanceField
+			shader.AddRange(manager.GetBaseField(resources, otherMaterial)["m_Shader"].Children); // TextMeshPro/DistanceField
 
 			var texture = field["m_SavedProperties"]["m_TexEnvs"]["Array"].First(f => f[0].AsString == "_MainTex")[1]["m_Texture"];
 			new AssetRef(0, GetAsset(atlas).PathId).To(texture); // m_FileID, m_PathID
 
-			info.SetNewData(field.WriteToByteArray());
+			info.SetNewData(field);
 			return result;
 		}
 
@@ -166,12 +164,6 @@ namespace LEFontPatch {
 			if (fromRes && (atlas >= 0 || material >= 0))
 				throw new ArgumentException("A TMP_FontAsset in resource.assets cannot reference assets outside resource.assets");
 
-			if ((int)data["m_AtlasPopulationMode"]! == 1) {
-				if (fromRes && sourceFontFile >= 0)
-					throw new ArgumentException("A TMP_FontAsset in resource.assets cannot reference assets outside resource.assets", nameof(sourceFontFile));
-				GetAssetRef(sourceFontFile).To(data["m_SourceFontFile"]!);
-			}
-
 			// Two fields that are not in the old version of TextMeshPro which the game uses:
 			//data.Remove("m_IsMultiAtlasTexturesEnabled");
 			//data.Remove("m_ClearDynamicDataOnBuild");
@@ -182,6 +174,15 @@ namespace LEFontPatch {
 			).To(data["m_Script"]!);
 
 			GetAssetRef(material).To(data["material"]!);
+
+			if ((int)data["m_AtlasPopulationMode"]! == 1) {
+				if (fromRes && sourceFontFile >= 0)
+					throw new ArgumentException("A TMP_FontAsset in resource.assets cannot reference assets outside resource.assets", nameof(sourceFontFile));
+				if (GetAsset(sourceFontFile).TypeId != (int)AssetClassID.Font)
+					throw new ArgumentException("The provided sourceFontFile is not a Font asset", nameof(sourceFontFile));
+				GetAssetRef(sourceFontFile).To(data["m_SourceFontFile"]!);
+			} else
+				default(AssetRef).To(data["m_SourceFontFile"]!);
 
 			data["m_AtlasTextures"]!["Array"] = new JsonArray((JsonObject)GetAssetRef(atlas));
 
@@ -228,11 +229,11 @@ namespace LEFontPatch {
 				sModified = false;
 			}
 			void Save(AssetsFileInstance assets) {
-				var p = Path.Combine(gameDataPath, "~" + assets.name);
+				var p = $"{gameDataPath}/~{assets.name}";
 				using (var writer = new AssetsFileWriter(p))
 					assets.file.Write(writer, 0);
 				assets.file.Close();
-				File.Move(p, Path.Combine(gameDataPath, assets.name), true);
+				File.Move(p, $"{gameDataPath}/{assets.name}", true);
 			}
 		}
 
