@@ -2,6 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -30,28 +31,28 @@ namespace LEFontPatch {
 				throw new FileNotFoundException("Unable to find the metadata or assembly in the game data folder: " + gameDataPath);
 
 			manager = new() {
+				UseTemplateFieldCache = true,
 				UseMonoTemplateFieldCache = true,
 				UseRefTypeManagerCache = true,
-				UseTemplateFieldCache = true,
+				UseQuickLookup = false,
 				MonoTempGenerator = new Cpp2IlTempGenerator(result.metaPath, result.asmPath)
 			};
 			try {
-				using (var tpk = Assembly.GetExecutingAssembly().GetManifestResourceStream(nameof(LEFontPatch) + ".classdata.tpk"))
+				using (var tpk = Assembly.GetExecutingAssembly().GetManifestResourceStream(nameof(LEFontPatch) + ".classdata.tpk")!)
 					manager.LoadClassPackage(tpk); // Type Tree Tpk from: https://github.com/AssetRipper/Tpk (Don't use the brotli one)
 
 				sharedassets1 = manager.LoadAssetsFile(gameDataPath + "/sharedassets1.assets");
 				resources = manager.LoadAssetsFile(gameDataPath + "/resources.assets");
 
 				for (var i = 0; i < sharedassets1.file.Metadata.Externals.Count; ++i)
-					if (sharedassets1.file.Metadata.Externals[i].PathName == "resources.assets") {
+					if (sharedassets1.file.Metadata.Externals[i].PathName == "resources.assets")
 						dependencyIndex = i;
-					}
 				if (dependencyIndex < 0)
 					throw new InvalidDataException($"Unable to find the dependency index of resources.assets in sharedassets1.assets");
 				manager.LoadClassDatabaseFromPackage(resources.file.Metadata.UnityVersion);
 
-				LoadTMPFonts(resources, 469);
-				LoadTMPFonts(sharedassets1, 347);
+				LoadTMPFonts(resources, 467);
+				LoadTMPFonts(sharedassets1, 432);
 			} catch {
 				Dispose();
 				throw;
@@ -71,13 +72,21 @@ namespace LEFontPatch {
 			return -1;
 
 			bool Found(int index) => manager.GetExtAsset(assets, monoScripts[index].FileId, monoScripts[index].PathId, false, AssetReadFlags.SkipMonoBehaviourFields)
-					.baseField["m_Name"].AsString == typeName;
+				.baseField["m_Name"].AsString == typeName;
 		}
 
 		private void LoadTMPFonts(AssetsFileInstance assets, int exceptedScriptIndex = 0) {
-			var index = FindScriptIndex(assets, "TMP_FontAsset", exceptedScriptIndex);
+			if (assets != resources && assets != sharedassets1)
+				throw new ArgumentException("Only resources.assets and sharedassets1.assets are allowed", nameof(assets));
+
+			foreach (var (i, field) in EnumerateAssetsOfType(assets, "TMP_FontAsset", exceptedScriptIndex))
+				TMPFonts.Add(assets == resources ? ~i : i, field);
+		}
+
+		private IEnumerable<(int index, AssetTypeValueField field)> EnumerateAssetsOfType(AssetsFileInstance assets, string typeName, int exceptedScriptIndex = 0) {
+			var index = FindScriptIndex(assets, typeName, exceptedScriptIndex);
 			if (index < 0)
-				return;
+				yield break;
 
 			for (var i = 0; i < assets.file.AssetInfos.Count; ++i) {
 				if (assets.file.GetScriptIndex(assets.file.AssetInfos[i]) != index)
@@ -87,8 +96,7 @@ namespace LEFontPatch {
 				if ((AssetRef)field["m_Script"] != (AssetRef)assets.file.Metadata.ScriptTypes[index])
 					throw new InvalidDataException("The ScriptIndex of a field doesn't match the one in metadata of assets, the asset file may be broken");
 
-				TMPFonts.Add(assets == resources ? ~i : assets == sharedassets1 ? i :
-					throw new ArgumentException("Only resources.assets and sharedassets1.assets are accepted", nameof(assets)), field);
+				yield return (i, field);
 			}
 		}
 
@@ -157,17 +165,12 @@ namespace LEFontPatch {
 			var fromRes = fontIndex < 0;
 
 			AssetRef GetAssetRef(int assetIndex) => new(
-					fromRes ? 0 : assetIndex >= 0 ? 0 : dependencyIndex,
+					fromRes ? 0 : assetIndex >= 0 ? 0 : (dependencyIndex + 1),
 					GetAsset(assetIndex).PathId
 				);
 
 			if (fromRes && (atlas >= 0 || material >= 0))
 				throw new ArgumentException("A TMP_FontAsset in resource.assets cannot reference assets outside resource.assets");
-
-			// Two fields that are not in the old version of TextMeshPro which the game uses:
-			//data.Remove("m_IsMultiAtlasTexturesEnabled");
-			//data.Remove("m_ClearDynamicDataOnBuild");
-			// JsonToBytes won't read the fields not in the template, so removing is not necessary
 
 			new AssetRef(
 				(fromRes ? TMPFonts.First(k => k.Key < 0) : TMPFonts.First(k => k.Key >= 0)).Value["m_Script"]
@@ -216,6 +219,38 @@ namespace LEFontPatch {
 						sModified = true;
 					}
 				}
+			}
+		}
+
+		public string DumpFontFallbacks() {
+			var sb = new StringBuilder();
+			sb.AppendLine("Global Fallbacks:");
+			var settings = EnumerateAssetsOfType(resources, "TMP_Settings", 158).FirstOrDefault().field;
+			if (settings != null) {
+				foreach (var f in settings["m_fallbackFontAssets"]["Array"].Children)
+					Dump((AssetRef)f, true);
+				Dump((AssetRef)settings["m_defaultFontAsset"], true);
+			}
+			sb.AppendLine();
+
+			foreach (var (index, field) in TMPFonts) {
+				sb.AppendLine(field["m_Name"].AsString + ":");
+				foreach (var f in field["m_FallbackFontAssetTable"]["Array"].Children)
+					Dump((AssetRef)f, index < 0);
+			}
+
+			return sb.ToString();
+
+			void Dump(AssetRef aref, bool fromRes) {
+				if (aref.IsNull)
+					return;
+
+				Debug.Assert(fromRes && aref.FileID == 0 || !fromRes && (aref.FileID == 0 || aref.FileID == dependencyIndex + 1),
+					$"Found a fallback font is neither in resources.assets nor sharedassets1.assets: ({aref.FileID}, {aref.PathID})");
+				fromRes = fromRes || aref.FileID != 0;
+				var (i, data) = TMPFonts.First(kvp => (fromRes ? kvp.Key < 0 : kvp.Key >= 0) &&
+					aref.PathID == GetAsset(kvp.Key).PathId);
+				sb.AppendLine("\t| " + data["m_Name"].AsString);
 			}
 		}
 
@@ -322,10 +357,12 @@ namespace LEFontPatch {
 		private readonly struct AssetRef(int fileID, long pathID) : IEquatable<AssetRef>, IComparable<AssetRef>, ICloneable {
 			public readonly int FileID = fileID;
 			public readonly long PathID = pathID;
+			public bool IsNull => FileID == 0 && PathID == 0;
 
 			public AssetRef(AssetPPtr aptr) : this(aptr.FileId, aptr.PathId) { }
 			public AssetRef(AssetTypeValueField field) : this(field[0].AsInt, field[1].AsLong) { }
 			public AssetRef(JsonNode node) : this((int)node["m_FileID"]!, (long)node["m_PathID"]!) { }
+
 			public static explicit operator AssetRef(AssetPPtr aptr) => new(aptr);
 			public static explicit operator AssetRef(AssetTypeValueField field) => new(field);
 			public static explicit operator AssetRef(JsonNode node) => new(node);

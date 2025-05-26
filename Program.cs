@@ -10,14 +10,18 @@ namespace LEFontPatch {
 	public static class Program {
 		public static void Main(string[] args) {
 			if (args.Length != 2) {
-				Console.WriteLine("Usage: LEFontPatch <gamePath> <zipPath|folderPath>");
+				Console.WriteLine("Usage: LEFontPatch <gamePath> <zipPath|folderPath>\nor: LEFontPatch --dump <gamePath>");
 				if (args.Length == 0)
 					goto pause;
 				return;
 			}
 			try {
-				Run(args[0] + "/Last Epoch_Data", args[1]);
-				return; // Do not pause if success
+				if (args[0].Equals("--dump", StringComparison.OrdinalIgnoreCase))
+					DumpFallbacks(args[1] + "/Last Epoch_Data");
+				else {
+					Run(args[0] + "/Last Epoch_Data", args[1]);
+					return; // Do not pause if success
+				}
 			} catch (Exception ex) {
 				var tmp = Console.ForegroundColor;
 				Console.ForegroundColor = ConsoleColor.Red;
@@ -63,6 +67,7 @@ namespace LEFontPatch {
 				}).AsObject();
 
 				Console.WriteLine("Reading TMP_FontAssets");
+				LibCpp2IL.Logging.LibLogger.ShowVerbose = false;
 				using var manager = new LEFontManager(gameDataPath);
 				Console.WriteLine();
 
@@ -116,7 +121,7 @@ namespace LEFontPatch {
 								manager.ReplaceTMPFont(i, fontData, atlas, material, sourceFont);
 								(i < 0 ? rCache : sCache)[fontIndex] = i;
 							}
-                            excludes.Add(i);
+							excludes.Add(i);
 							Console.Write('\t');
 							Console.WriteLine("Replaced: " + fontName);
 						}
@@ -161,6 +166,14 @@ namespace LEFontPatch {
 				if (buffer is not null)
 					ArrayPool<byte>.Shared.Return(buffer);
 			}
+		}
+
+		public static void DumpFallbacks(string gameDataPath) {
+			Console.WriteLine("Reading TMP_FontAssets");
+			using var manager = new LEFontManager(gameDataPath);
+			Console.WriteLine();
+
+			Console.WriteLine(manager.DumpFontFallbacks());
 		}
 	}
 }
