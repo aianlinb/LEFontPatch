@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -89,7 +89,7 @@ namespace LEFontPatch {
 				yield break;
 
 			for (var i = 0; i < assets.file.AssetInfos.Count; ++i) {
-				if (assets.file.GetScriptIndex(assets.file.AssetInfos[i]) != index)
+				if (assets.file.AssetInfos[i].GetScriptIndex(assets.file) != index)
 					continue;
 
 				var field = manager.GetBaseField(assets, assets.file.AssetInfos[i]);
