@@ -5,7 +5,6 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-
 using AssetsTools.NET;
 using AssetsTools.NET.Cpp2IL;
 using AssetsTools.NET.Extra;
@@ -70,9 +69,11 @@ namespace LEFontPatch {
 				if (Found(i))
 					return i;
 			return -1;
-
-			bool Found(int index) => manager.GetExtAsset(assets, monoScripts[index].FileId, monoScripts[index].PathId, false, AssetReadFlags.SkipMonoBehaviourFields)
-				.baseField["m_Name"].AsString == typeName;
+			
+			bool Found(int index) {
+				var ae = manager.GetExtAsset(assets, monoScripts[index].FileId, monoScripts[index].PathId, true);
+				return GetAssetName(ae.file, ae.info) == typeName;
+			}
 		}
 
 		private void LoadTMPFonts(AssetsFileInstance assets, int exceptedScriptIndex = 0) {
@@ -93,10 +94,8 @@ namespace LEFontPatch {
 					continue;
 
 				var field = manager.GetBaseField(assets, assets.file.AssetInfos[i]);
-				if ((AssetRef)field["m_Script"] != (AssetRef)assets.file.Metadata.ScriptTypes[index])
-					throw new InvalidDataException("The ScriptIndex of a field doesn't match the one in metadata of assets, the asset file may be broken");
-
-				yield return (i, field);
+				yield return (AssetRef)field["m_Script"] == (AssetRef)assets.file.Metadata.ScriptTypes[index]
+					? (i, field) : throw new InvalidDataException("The ScriptIndex of a field doesn't match the one in metadata of assets, the asset file may be broken");
 			}
 		}
 
@@ -117,10 +116,35 @@ namespace LEFontPatch {
 				field = manager.GetBaseField(index < 0 ? resources : sharedassets1, info);
 			return info;
 		}
+		public string GetAssetName(int index) => TMPFonts.TryGetValue(index, out var field)
+			? field["m_Name"].AsString
+			: GetAssetName(index < 0 ? resources : sharedassets1, GetAsset(index));
+		public string GetAssetName(AssetsFileInstance file, AssetFileInfo info) {
+			lock (file.LockReader) {
+				var reader = file.file.Reader;
+				reader.Position = info.GetAbsoluteByteOffset(file.file);
+				Span<byte> data = stackalloc byte[reader.ReadInt32()];
+				reader.BaseStream.ReadExactly(data);
+				return Encoding.UTF8.GetString(data);
+			}
+		}
 
-		public int AddFontFile(byte[] data) {
+		private Dictionary<string, int>? FontFileNames;
+		public bool TryAddFontFile(byte[] data, out int index) {
 			var nameLen = MemoryMarshal.Read<int>(data);
+			var name = Encoding.UTF8.GetString(data, 4, nameLen);
+			if (FontFileNames is null) {
+				FontFileNames = [];
+				var infos = resources.file.AssetInfos;
+				for (var i = 0; i < infos.Count; ++i)
+					if (infos[i].TypeId == (int)AssetClassID.Font)
+						FontFileNames.TryAdd(GetAssetName(resources, infos[i]), ~i);
+			}
+			if (FontFileNames.TryGetValue(name, out index))
+				return false;
+
 			var offset = sizeof(int) + nameLen + sizeof(float); // m_Name, m_LineSpacing
+			// Align to 4
 			var mod = offset % 4;
 			if (mod != 0)
 				offset += 4 - mod;
@@ -128,7 +152,8 @@ namespace LEFontPatch {
 			data.AsSpan(offset, AssetRefSize).Clear(); // m_DefaultMaterial
 			offset += AssetRefSize + sizeof(float); // m_FontSize
 			data.AsSpan(offset, AssetRefSize).Clear(); // m_Texture
-			return AddAsset(data, AssetClassID.Font);
+			index = AddAsset(data, AssetClassID.Font);
+			return true;
 		}
 
 		public int AddAtlas(byte[] data) {
@@ -179,6 +204,8 @@ namespace LEFontPatch {
 			GetAssetRef(material).To(data["material"]!);
 
 			if ((int)data["m_AtlasPopulationMode"]! == 1) {
+				if (sourceFontFile == -1)
+					throw new ArgumentException("Font file not provided", nameof(sourceFontFile));
 				if (fromRes && sourceFontFile >= 0)
 					throw new ArgumentException("A TMP_FontAsset in resource.assets cannot reference assets outside resource.assets", nameof(sourceFontFile));
 				if (GetAsset(sourceFontFile).TypeId != (int)AssetClassID.Font)

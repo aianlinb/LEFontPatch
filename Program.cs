@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.IO.Compression;
 #if DEBUG
 using System.Runtime.ExceptionServices;
@@ -10,7 +10,8 @@ namespace LEFontPatch {
 	public static class Program {
 		public static void Main(string[] args) {
 			if (args.Length != 2) {
-				Console.WriteLine("Usage: LEFontPatch <gamePath> <zipPath|folderPath>\nor: LEFontPatch --dump <gamePath>");
+				Console.WriteLine("Usage: LEFontPatch <gamePath> <zipPath|folderPath>");
+				Console.WriteLine("   or: LEFontPatch --dump <gamePath>");
 				if (args.Length == 0)
 					goto pause;
 				return;
@@ -71,8 +72,10 @@ namespace LEFontPatch {
 				using var manager = new LEFontManager(gameDataPath);
 				Console.WriteLine();
 
-				var sourceFonts = json["sourceFontFiles"]?.AsArray().Select(
-					n => manager.AddFontFile(GetFile((string)n["path"]))).ToArray() ?? [];
+				var sourceFonts = json["sourceFontFiles"]?.AsArray().Select(n => {
+					manager.TryAddFontFile(GetFile((string)n["path"]), out var i);
+					return i;
+				}).ToArray() ?? [];
 
 				var atlases = json["atlases"]?.AsArray().Select(
 					n => manager.AddAtlas(GetFile((string)n["path"]))).ToArray() ?? [];
@@ -128,6 +131,11 @@ namespace LEFontPatch {
 					}
 				}
 
+				if (excludes.Count == 0 && json["cancelIfNoFontReplaced"] is JsonValue v && (bool)v) {
+					Console.WriteLine("No font replaced, cancelling . . .");
+					return;
+				}
+
 				if (json["removeCharacters"] is JsonObject rC) {
 					Console.WriteLine("Start removing characters . . .");
 					var characters = new HashSet<int>();
@@ -145,7 +153,7 @@ namespace LEFontPatch {
 						}
 					}
 
-					if (rC["excludeReplaced"] is not JsonValue v || !(bool)v)
+					if (rC["excludeReplaced"] is not JsonValue v2 || !(bool)v2)
 						excludes.Clear();
 					if (rC["excludeFonts"] is JsonArray efs)
 						foreach (var ef in efs) {
