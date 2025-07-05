@@ -175,7 +175,11 @@ namespace LEFontPatch {
 			var info = GetAsset(result, out var field);
 
 			var shader = field["m_Shader"].Children;
-			var otherMaterial = resources.file.GetAssetInfo(TMPFonts.First(kvp => kvp.Key < 0).Value["material"]["m_PathID"].AsLong);
+			var tmpFont = TMPFonts.First(kvp => kvp.Key < 0).Value;
+			var mat = tmpFont["m_Material"];
+			if (mat.IsDummy)
+				mat = tmpFont["material"]; // old versions of TextMeshPro
+			var otherMaterial = resources.file.GetAssetInfo(mat["m_PathID"].AsLong);
 			shader.Clear();
 			shader.AddRange(manager.GetBaseField(resources, otherMaterial)["m_Shader"].Children); // TextMeshPro/DistanceField
 
@@ -201,7 +205,7 @@ namespace LEFontPatch {
 				(fromRes ? TMPFonts.First(k => k.Key < 0) : TMPFonts.First(k => k.Key >= 0)).Value["m_Script"]
 			).To(data["m_Script"]!);
 
-			GetAssetRef(material).To(data["material"]!);
+			GetAssetRef(material).To(data["m_Material"] ?? data["material"]!);
 
 			if ((int)data["m_AtlasPopulationMode"]! == 1) {
 				if (sourceFontFile == -1)

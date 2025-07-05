@@ -13,7 +13,7 @@
 		<DebuggerSupport>false</DebuggerSupport>
 		<EventSourceSupport>false</EventSourceSupport>
 
-		<Version>1.1.0</Version>
+		<Version>1.2.0</Version>
 		<Authors>aianlinb</Authors>
 		<Copyright>Copyright © 2024-2025 aianlinb</Copyright>
 		<PackageId>LastEpoch.Font</PackageId>
