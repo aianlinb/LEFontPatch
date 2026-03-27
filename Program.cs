@@ -106,8 +106,7 @@ namespace LEFontPatch {
 						if (!fontDic.TryGetValue(fontName, out var list)) {
 							var tmp = Console.ForegroundColor;
 							Console.ForegroundColor = ConsoleColor.Yellow;
-							Console.Write('\t');
-							Console.WriteLine("Warning: Font not found: " + fontName);
+							Console.WriteLine("\tWarning: Font not found: " + fontName);
 							Console.ForegroundColor = tmp;
 							continue;
 						}
@@ -147,9 +146,11 @@ namespace LEFontPatch {
 					BuildFontDic();
 					if (rC["fromFont"] is JsonArray from2) {
 						foreach (var f in from2) {
-							var chars = manager.GetCharacters(fontDic[(string)f][0], out var count);
-							characters.EnsureCapacity(characters.Count + count);
-							characters.UnionWith(chars);
+							foreach (var fi in fontDic[(string)f]) {
+								var chars = manager.GetCharacters(fi, out var count);
+								characters.EnsureCapacity(characters.Count + count);
+								characters.UnionWith(chars);
+							}
 						}
 					}
 
@@ -157,14 +158,22 @@ namespace LEFontPatch {
 						excludes.Clear();
 					if (rC["excludeFonts"] is JsonArray efs)
 						foreach (var ef in efs) {
-							var fs = fontDic[(string)ef];
+							if (!fontDic.TryGetValue((string)ef, out var fs)) {
+								var tmp = Console.ForegroundColor;
+								Console.ForegroundColor = ConsoleColor.Yellow;
+								Console.WriteLine("\tWarning: Font not found: " + (string)ef);
+								Console.ForegroundColor = tmp;
+								continue;
+							}
+
 							excludes.EnsureCapacity(excludes.Count + fs.Count);
 							excludes.UnionWith(fs);
 						}
 
-					Console.WriteLine($"Removing {characters.Count} characters in {manager.TMPFonts.Count - excludes.Count} fonts");
+					var excludedFonts = manager.TMPFonts.Keys.Except(excludes).ToArray();
+					Console.WriteLine($"Removing {characters.Count} characters in {excludedFonts.Length} fonts");
 					if (characters.Count != 0)
-						manager.RemoveCharacters(manager.TMPFonts.Keys.Except(excludes), characters);
+						manager.RemoveCharacters(excludedFonts, characters);
 				}
 #nullable restore
 				Console.WriteLine("Saving . . . (may takes minutes)");

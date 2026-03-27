@@ -13,16 +13,18 @@
 		<DebuggerSupport>false</DebuggerSupport>
 		<EventSourceSupport>false</EventSourceSupport>
 
-		<Version>1.2.0</Version>
+		<Version>1.2.1</Version>
 		<Authors>aianlinb</Authors>
-		<Copyright>Copyright © 2024-2025 aianlinb</Copyright>
+		<Copyright>Copyright © 2024-2026 aianlinb</Copyright>
 		<PackageId>LastEpoch.Font</PackageId>
 		<RepositoryUrl>https://github.com/aianlinb/LEFontPatch</RepositoryUrl>
 		<PackageProjectUrl>$(RepositoryUrl)</PackageProjectUrl>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="AssetsTools.NET.Cpp2IL" Version="*-*" /> <!--At least 1.0.1-preview1-->
+		<PackageReference Include="AssetsTools.NET" Version="*" />
+		<PackageReference Include="AssetsTools.NET.Cpp2IL" Version="3.0.4" /> <!--At least 1.0.1-preview1-->
+		<PackageReference Include="Samboy063.LibCpp2IL" Version="2022.1.0-pre-release.19" />
 		<EmbeddedResource Include="classdata.tpk" />
 		<RdXmlFile Include="LibCpp2IL.RD.xml" />
 	</ItemGroup>
