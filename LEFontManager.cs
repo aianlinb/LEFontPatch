@@ -14,44 +14,58 @@ namespace LEFontPatch {
 		private readonly string gameDataPath;
 		private readonly AssetsManager manager;
 		private readonly AssetsFileInstance resources;
-		private readonly AssetsFileInstance sharedassets1;
+		private readonly AssetsFileInstance? sharedassets;
 		private bool rModified = false;
 		private bool sModified = false;
 		private readonly int dependencyIndex = -1;
+		private readonly int resourcesDependencyIndex = -1;
 		/// <summary>
 		/// TextMeshPro Fonts
 		/// </summary>
 		public readonly Dictionary<int, AssetTypeValueField> TMPFonts = [];
 
+		[MemberNotNullWhen(false, nameof(sharedassets))]
+		private bool BaseIsResources => dependencyIndex != -1 || sharedassets == null;
+
 		public LEFontManager(string gameDataPath) {
 			this.gameDataPath = Path.GetFullPath(gameDataPath);
-			var result = FindCpp2IlFiles.Find(gameDataPath);
-			if (!result.success)
-				throw new FileNotFoundException("Unable to find the metadata or assembly in the game data folder: " + gameDataPath);
-
+			var asmPath = Path.Combine(gameDataPath, "..", "GameAssembly.so");
+			if (!File.Exists(asmPath))
+				asmPath = Path.Combine(gameDataPath, "..", "GameAssembly.dll");
 			manager = new() {
 				UseTemplateFieldCache = true,
 				UseMonoTemplateFieldCache = true,
 				UseRefTypeManagerCache = true,
 				UseQuickLookup = false,
-				MonoTempGenerator = new Cpp2IlTempGenerator(result.metaPath, result.asmPath)
+				MonoTempGenerator = new Cpp2IlTempGenerator(Path.Combine(gameDataPath, "il2cpp_data", "Metadata", "global-metadata.dat"), asmPath)
 			};
 			try {
 				using (var tpk = Assembly.GetExecutingAssembly().GetManifestResourceStream(nameof(LEFontPatch) + ".classdata.tpk")!)
 					manager.LoadClassPackage(tpk); // Type Tree Tpk from: https://github.com/AssetRipper/Tpk (Don't use the brotli one)
 
-				sharedassets1 = manager.LoadAssetsFile(gameDataPath + "/sharedassets1.assets");
+				sharedassets = File.Exists(gameDataPath + "/sharedassets1.assets")
+					? manager.LoadAssetsFile(gameDataPath + "/sharedassets1.assets")
+					: File.Exists(gameDataPath + "/sharedassets0.assets")
+						? manager.LoadAssetsFile(gameDataPath + "/sharedassets0.assets")
+						: null;
 				resources = manager.LoadAssetsFile(gameDataPath + "/resources.assets");
 
-				for (var i = 0; i < sharedassets1.file.Metadata.Externals.Count; ++i)
-					if (sharedassets1.file.Metadata.Externals[i].PathName == "resources.assets")
-						dependencyIndex = i;
-				if (dependencyIndex < 0)
-					throw new InvalidDataException($"Unable to find the dependency index of resources.assets in sharedassets1.assets");
 				manager.LoadClassDatabaseFromPackage(resources.file.Metadata.UnityVersion);
-
-				LoadTMPFonts(resources, 467);
-				LoadTMPFonts(sharedassets1, 432);
+				LoadTMPFonts(resources, 134);
+				if (sharedassets != null) {
+					for (var i = 0; i < sharedassets.file.Metadata.Externals.Count; ++i)
+						if (Path.GetFileName(sharedassets.file.Metadata.Externals[i].PathName) == resources.name)
+							dependencyIndex = i;
+					for (var i = 0; i < resources.file.Metadata.Externals.Count; ++i)
+						if (Path.GetFileName(resources.file.Metadata.Externals[i].PathName) == sharedassets.name)
+							resourcesDependencyIndex = i;
+					if (dependencyIndex < 0 && resourcesDependencyIndex < 0) {
+						manager.UnloadAssetsFile(sharedassets);
+						sharedassets = null;
+					}
+					else
+						LoadTMPFonts(sharedassets, 1);
+				}
 			} catch {
 				Dispose();
 				throw;
@@ -77,8 +91,8 @@ namespace LEFontPatch {
 		}
 
 		private void LoadTMPFonts(AssetsFileInstance assets, int exceptedScriptIndex = 0) {
-			if (assets != resources && assets != sharedassets1)
-				throw new ArgumentException("Only resources.assets and sharedassets1.assets are allowed", nameof(assets));
+			if (assets != resources && assets != sharedassets)
+				throw new ArgumentException($"Only {resources.name} and {sharedassets?.name} are allowed", nameof(assets));
 
 			foreach (var (i, field) in EnumerateAssetsOfType(assets, "TMP_FontAsset", exceptedScriptIndex))
 				TMPFonts.Add(assets == resources ? ~i : i, field);
@@ -100,25 +114,30 @@ namespace LEFontPatch {
 		}
 
 		private int AddAsset(byte[] data, AssetClassID classId, ushort scriptIndex = ushort.MaxValue) {
-			var asset = AssetFileInfo.Create(resources.file, resources.file.Metadata.AssetInfos[^1].PathId + 1, (int)classId, scriptIndex, manager.ClassDatabase);
+			var assets = BaseIsResources ? resources : sharedassets;
+			var asset = AssetFileInfo.Create(assets.file, assets.file.Metadata.AssetInfos[^1].PathId + 1, (int)classId, scriptIndex, manager.ClassDatabase);
 			asset.Replacer = new ContentReplacerFromBuffer(data);
-			var index = ~resources.file.Metadata.AssetInfos.Count;
-			resources.file.Metadata.AssetInfos.Add(asset);
-			rModified = true;
+			var index = assets.file.Metadata.AssetInfos.Count;
+			assets.file.Metadata.AssetInfos.Add(asset);
+			if (BaseIsResources) {
+				rModified = true;
+				index = ~index;
+			} else
+				sModified = true;
 			return index;
 		}
 
 		public AssetFileInfo GetAsset(int index) => index < 0 ? resources.file.Metadata.AssetInfos[~index]
-														: sharedassets1.file.Metadata.AssetInfos[index];
+														: sharedassets!.file.Metadata.AssetInfos[index];
 		public AssetFileInfo GetAsset(int index, out AssetTypeValueField field) {
 			var info = GetAsset(index);
 			if (!TMPFonts.TryGetValue(index, out field!))
-				field = manager.GetBaseField(index < 0 ? resources : sharedassets1, info);
+				field = manager.GetBaseField(index < 0 ? resources : sharedassets, info);
 			return info;
 		}
 		public string GetAssetName(int index) => TMPFonts.TryGetValue(index, out var field)
 			? field["m_Name"].AsString
-			: GetAssetName(index < 0 ? resources : sharedassets1, GetAsset(index));
+			: GetAssetName(index < 0 ? resources : sharedassets!, GetAsset(index));
 		public string GetAssetName(AssetsFileInstance file, AssetFileInfo info) {
 			lock (file.LockReader) {
 				var reader = file.file.Reader;
@@ -139,6 +158,12 @@ namespace LEFontPatch {
 				for (var i = 0; i < infos.Count; ++i)
 					if (infos[i].TypeId == (int)AssetClassID.Font)
 						FontFileNames.TryAdd(GetAssetName(resources, infos[i]), ~i);
+				if (sharedassets != null) {
+					infos = sharedassets.file.AssetInfos;
+					for (var i = 0; i < infos.Count; ++i)
+						if (infos[i].TypeId == (int)AssetClassID.Font)
+							FontFileNames.TryAdd(GetAssetName(sharedassets, infos[i]), i);
+				}
 			}
 			if (FontFileNames.TryGetValue(name, out index))
 				return false;
@@ -166,22 +191,24 @@ namespace LEFontPatch {
 		}
 
 		public int AddMaterial(byte[] data, int atlas) {
+			var toRes = BaseIsResources;
+			var assets = toRes ? resources : sharedassets!;
 			[DoesNotReturn, DebuggerNonUserCode]
-			static void Throw() => throw new ArgumentException("Cannot reference assets outside resource.assets", nameof(atlas));
-			if (atlas >= 0)
+			void Throw() => throw new ArgumentException("Cannot reference assets outside " + assets.name, nameof(atlas));
+			if (toRes ? atlas >= 0 : atlas < 0)
 				Throw();
 
 			var result = AddAsset(data, AssetClassID.Material);
 			var info = GetAsset(result, out var field);
 
 			var shader = field["m_Shader"].Children;
-			var tmpFont = TMPFonts.First(kvp => kvp.Key < 0).Value;
+			var tmpFont = TMPFonts.First(kvp => toRes ? kvp.Key < 0 : kvp.Key >= 0).Value;
 			var mat = tmpFont["m_Material"];
 			if (mat.IsDummy)
 				mat = tmpFont["material"]; // old versions of TextMeshPro
-			var otherMaterial = resources.file.GetAssetInfo(mat["m_PathID"].AsLong);
+			var otherMaterial = assets.file.GetAssetInfo(mat["m_PathID"].AsLong);
 			shader.Clear();
-			shader.AddRange(manager.GetBaseField(resources, otherMaterial)["m_Shader"].Children); // TextMeshPro/DistanceField
+			shader.AddRange(manager.GetBaseField(assets, otherMaterial)["m_Shader"].Children); // TextMeshPro/DistanceField
 
 			var texture = field["m_SavedProperties"]["m_TexEnvs"]["Array"].First(f => f[0].AsString == "_MainTex")[1]["m_Texture"];
 			new AssetRef(0, GetAsset(atlas).PathId).To(texture); // m_FileID, m_PathID
@@ -193,13 +220,19 @@ namespace LEFontPatch {
 		public void ReplaceTMPFont(int fontIndex, JsonObject data, int atlas, int material, int sourceFontFile = -1) {
 			var fromRes = fontIndex < 0;
 
-			AssetRef GetAssetRef(int assetIndex) => new(
-					fromRes ? 0 : assetIndex >= 0 ? 0 : (dependencyIndex + 1),
-					GetAsset(assetIndex).PathId
-				);
+			AssetRef GetAssetRef(int assetIndex) {
+				if (assetIndex < 0 == fromRes)
+					return new(0, GetAsset(assetIndex).PathId);
 
-			if (fromRes && (atlas >= 0 || material >= 0))
-				throw new ArgumentException("A TMP_FontAsset in resource.assets cannot reference assets outside resource.assets");
+				var externalIndex = fromRes ? resourcesDependencyIndex : dependencyIndex;
+				return externalIndex < 0
+					? throw new ArgumentException("Dependency resolution failed")
+					: new(externalIndex + 1, GetAsset(assetIndex).PathId);
+			}
+
+			if (resourcesDependencyIndex == -1 && fromRes && (atlas >= 0 || material >= 0)
+				|| dependencyIndex == -1 && !fromRes && (atlas < 0 || material < 0))
+				throw new ArgumentException("A TMP_FontAsset cannot reference assets in a bundle which is not a dependency of its own bundle");
 
 			new AssetRef(
 				(fromRes ? TMPFonts.First(k => k.Key < 0) : TMPFonts.First(k => k.Key >= 0)).Value["m_Script"]
@@ -210,8 +243,9 @@ namespace LEFontPatch {
 			if ((int)data["m_AtlasPopulationMode"]! == 1) {
 				if (sourceFontFile == -1)
 					throw new ArgumentException("Font file not provided", nameof(sourceFontFile));
-				if (fromRes && sourceFontFile >= 0)
-					throw new ArgumentException("A TMP_FontAsset in resource.assets cannot reference assets outside resource.assets", nameof(sourceFontFile));
+				if (resourcesDependencyIndex == -1 && fromRes && sourceFontFile >= 0
+					|| dependencyIndex == -1 && !fromRes && sourceFontFile < 0)
+					throw new ArgumentException("A TMP_FontAsset cannot reference assets in a bundle which is not a dependency of its own bundle");
 				if (GetAsset(sourceFontFile).TypeId != (int)AssetClassID.Font)
 					throw new ArgumentException("The provided sourceFontFile is not a Font asset", nameof(sourceFontFile));
 				GetAssetRef(sourceFontFile).To(data["m_SourceFontFile"]!);
@@ -221,13 +255,13 @@ namespace LEFontPatch {
 			data["m_AtlasTextures"]!["Array"] = new JsonArray((JsonObject)GetAssetRef(atlas));
 
 			var info = GetAsset(fontIndex);
-			var bytes = JsonToBytes(data, manager.GetTemplateBaseField(fromRes ? resources : sharedassets1, info));
+			var bytes = JsonToBytes(data, manager.GetTemplateBaseField(fromRes ? resources : sharedassets, info));
 			info.Replacer = new ContentReplacerFromBuffer(bytes);
 			if (fromRes)
 				rModified = true;
 			else
 				sModified = true;
-			TMPFonts[fontIndex] = manager.GetBaseField(fromRes ? resources : sharedassets1, info);
+			TMPFonts[fontIndex] = manager.GetBaseField(fromRes ? resources : sharedassets, info);
 		}
 
 		public IEnumerable<int> GetCharacters(int fontIndex, out int count) {
@@ -246,7 +280,7 @@ namespace LEFontPatch {
 						resources.file.AssetInfos[~i].SetNewData(font);
 						rModified = true;
 					} else {
-						sharedassets1.file.AssetInfos[i].SetNewData(font);
+						sharedassets!.file.AssetInfos[i].SetNewData(font);
 						sModified = true;
 					}
 				}
@@ -256,7 +290,7 @@ namespace LEFontPatch {
 		public string DumpFontFallbacks() {
 			var sb = new StringBuilder();
 			sb.AppendLine("Global Fallbacks:");
-			var settings = EnumerateAssetsOfType(resources, "TMP_Settings", 158).FirstOrDefault().field;
+			var settings = EnumerateAssetsOfType(resources, "TMP_Settings", 45).First().field;
 			if (settings != null) {
 				foreach (var f in settings["m_fallbackFontAssets"]["Array"].Children)
 					Dump((AssetRef)f, true);
@@ -276,9 +310,9 @@ namespace LEFontPatch {
 				if (aref.IsNull)
 					return;
 
-				Debug.Assert(fromRes && aref.FileID == 0 || !fromRes && (aref.FileID == 0 || aref.FileID == dependencyIndex + 1),
-					$"Found a fallback font is neither in resources.assets nor sharedassets1.assets: ({aref.FileID}, {aref.PathID})");
-				fromRes = fromRes || aref.FileID != 0;
+				Debug.Assert(aref.FileID == 0 || aref.FileID == (fromRes ? resourcesDependencyIndex : dependencyIndex) + 1,
+					$"Found a fallback font is neither in {resources.name} nor {sharedassets?.name}.assets: ({aref.FileID}, {aref.PathID})");
+				fromRes = aref.FileID == 0 ? fromRes : !fromRes;
 				var (i, data) = TMPFonts.First(kvp => (fromRes ? kvp.Key < 0 : kvp.Key >= 0) &&
 					aref.PathID == GetAsset(kvp.Key).PathId);
 				sb.AppendLine("\t| " + data["m_Name"].AsString);
@@ -291,7 +325,7 @@ namespace LEFontPatch {
 				rModified = false;
 			}
 			if (sModified) {
-				Save(sharedassets1);
+				Save(sharedassets!);
 				sModified = false;
 			}
 			void Save(AssetsFileInstance assets) {
